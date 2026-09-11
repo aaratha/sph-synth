@@ -9,9 +9,11 @@ const WORKGROUP_SIZE: u32 = 64;
 const SMOOTHING_RADIUS: f32 = 0.15;
 const REST_DENSITY: f32 = 10.0;
 const STIFFNESS: f32 = 200.0;
-const VISCOSITY: f32 = 0.5;
+const VISCOSITY: f32 = 1.5;
 const PARTICLE_MASS: f32 = 1.0;
 const GRAVITY_Y: f32 = 0.0;
+const MOUSE_RADIUS: f32 = 0.25;
+const MOUSE_STRENGTH: f32 = 2.0;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -25,9 +27,14 @@ struct PhysicsParams {
     stiffness: f32,
     viscosity: f32,
     particle_mass: f32,
-    // Pads the uniform buffer up to a 16-byte multiple; physics.wgsl's Params
-    // struct doesn't need to declare this, the buffer just needs to be >= its size.
-    _padding: [f32; 3],
+    mouse_x: f32,
+    mouse_y: f32,
+    mouse_dx: f32,
+    mouse_dy: f32,
+    mouse_radius: f32,
+    mouse_strength: f32,
+    mouse_active: f32,
+    // 16 fields * 4 bytes = 64, already a 16-byte multiple — no padding needed.
 }
 
 /// Runs physics.wgsl over the particle buffer each step. The buffer never leaves
@@ -43,6 +50,9 @@ pub struct GpuSim {
     pressure_pipeline: wgpu::ComputePipeline,
     force_pipeline: wgpu::ComputePipeline,
     particle_count: u32,
+    mouse_pos: [f32; 2],
+    mouse_delta: [f32; 2],
+    mouse_active: bool,
 }
 
 impl GpuSim {
@@ -140,6 +150,9 @@ impl GpuSim {
             pressure_pipeline,
             force_pipeline,
             particle_count,
+            mouse_pos: [0.0, 0.0],
+            mouse_delta: [0.0, 0.0],
+            mouse_active: false,
         }
     }
 
@@ -151,7 +164,24 @@ impl GpuSim {
         self.particle_count
     }
 
+    /// Sets the click-and-drag interaction: `world_pos` and `world_delta` (this
+    /// frame's movement) are in the same [-1, 1] world space as particle
+    /// positions. `active` is false while the mouse button is up.
+    pub fn set_mouse(&mut self, world_pos: [f32; 2], world_delta: [f32; 2], active: bool) {
+        self.mouse_pos = world_pos;
+        self.mouse_delta = world_delta;
+        self.mouse_active = active;
+    }
+
     pub fn step(&self, dt: f32) {
+        // Convert this frame's raw cursor displacement into a velocity, so the
+        // push force stays consistent regardless of frame rate.
+        let mouse_velocity = if dt > 1e-4 {
+            [self.mouse_delta[0] / dt, self.mouse_delta[1] / dt]
+        } else {
+            [0.0, 0.0]
+        };
+
         let params = PhysicsParams {
             dt,
             gravity_y: GRAVITY_Y,
@@ -162,7 +192,13 @@ impl GpuSim {
             stiffness: STIFFNESS,
             viscosity: VISCOSITY,
             particle_mass: PARTICLE_MASS,
-            _padding: [0.0; 3],
+            mouse_x: self.mouse_pos[0],
+            mouse_y: self.mouse_pos[1],
+            mouse_dx: mouse_velocity[0],
+            mouse_dy: mouse_velocity[1],
+            mouse_radius: MOUSE_RADIUS,
+            mouse_strength: MOUSE_STRENGTH,
+            mouse_active: if self.mouse_active { 1.0 } else { 0.0 },
         };
         self.queue
             .write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));

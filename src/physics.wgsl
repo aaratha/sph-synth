@@ -27,6 +27,13 @@ struct Params {
     stiffness: f32,
     viscosity: f32,
     particle_mass: f32,
+    mouse_x: f32,
+    mouse_y: f32,
+    mouse_dx: f32,
+    mouse_dy: f32,
+    mouse_radius: f32,
+    mouse_strength: f32,
+    mouse_active: f32,
 };
 
 @group(0) @binding(0) var<storage, read_write> particles: array<Particle>;
@@ -106,6 +113,21 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     var p = particles[i];
     var force = vec2<f32>(0.0, params.gravity_y * p.density);
+
+    // Click-and-drag interaction: particles within mouse_radius of the cursor get
+    // pushed along the mouse's current movement vector (not pulled toward the
+    // cursor position), falling off linearly with distance. Scaled by density so
+    // it comes out as a uniform acceleration once divided by density below, like
+    // gravity.
+    if (params.mouse_active > 0.5) {
+        let to_mouse = vec2<f32>(params.mouse_x, params.mouse_y) - p.position;
+        let dist = length(to_mouse);
+        if (dist < params.mouse_radius) {
+            let falloff = 1.0 - dist / params.mouse_radius;
+            let mouse_velocity = vec2<f32>(params.mouse_dx, params.mouse_dy);
+            force += mouse_velocity * params.mouse_strength * falloff * p.density;
+        }
+    }
 
     for (var j = 0u; j < params.particle_count; j++) {
         if (j == i) {

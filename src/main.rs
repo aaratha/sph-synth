@@ -18,8 +18,8 @@ use std::sync::Arc;
 use gpu_sim::GpuSim;
 use renderer::Renderer;
 use winit::application::ApplicationHandler;
-use winit::dpi::LogicalSize;
-use winit::event::WindowEvent;
+use winit::dpi::{LogicalSize, PhysicalPosition};
+use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
@@ -33,6 +33,9 @@ const WINDOW_SIZE: u32 = 800;
 struct App {
     renderer: Option<Renderer>,
     gpu_sim: Option<GpuSim>,
+    cursor_pos: PhysicalPosition<f64>,
+    prev_world_pos: [f32; 2],
+    mouse_down: bool,
 }
 
 impl ApplicationHandler for App {
@@ -54,7 +57,7 @@ impl ApplicationHandler for App {
         let gpu_sim = GpuSim::new(
             renderer.device().clone(),
             renderer.queue().clone(),
-            &particles::initial_grid(48),
+            &particles::initial_grid(36),
         );
 
         self.renderer = Some(renderer);
@@ -70,7 +73,22 @@ impl ApplicationHandler for App {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(new_size) => renderer.resize(new_size),
+            WindowEvent::CursorMoved { position, .. } => self.cursor_pos = position,
+            WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => {
+                self.mouse_down = state == ElementState::Pressed;
+            }
             WindowEvent::RedrawRequested => {
+                let size = renderer.window().inner_size();
+                let world_x = (self.cursor_pos.x / size.width.max(1) as f64) as f32 * 2.0 - 1.0;
+                let world_y = 1.0 - (self.cursor_pos.y / size.height.max(1) as f64) as f32 * 2.0;
+                let world_pos = [world_x, world_y];
+                let world_delta = [
+                    world_pos[0] - self.prev_world_pos[0],
+                    world_pos[1] - self.prev_world_pos[1],
+                ];
+                gpu_sim.set_mouse(world_pos, world_delta, self.mouse_down);
+                self.prev_world_pos = world_pos;
+
                 gpu_sim.step(DT);
                 renderer.render(gpu_sim.particle_buffer(), gpu_sim.particle_count());
                 renderer.window().request_redraw();
@@ -87,6 +105,9 @@ fn main() {
     let mut app = App {
         renderer: None,
         gpu_sim: None,
+        cursor_pos: PhysicalPosition::new(0.0, 0.0),
+        prev_world_pos: [0.0, 0.0],
+        mouse_down: false,
     };
     event_loop.run_app(&mut app).expect("run winit event loop");
 }

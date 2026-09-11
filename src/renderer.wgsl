@@ -5,7 +5,7 @@ struct VertexOutput {
     @location(0) local_pos: vec2<f32>,
 };
 
-const POINT_RADIUS: f32 = 0.02;
+const POINT_RADIUS: f32 = 0.01;
 
 @vertex
 fn vs_main(
@@ -24,5 +24,5 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if (dot(in.local_pos, in.local_pos) > 1.0) {
         discard;
     }
-    return vec4<f32>(0.4, 0.7, 1.0, 1.0);
+    return vec4<f32>(0.0, 0.0, 0.0, 1.0);
 }

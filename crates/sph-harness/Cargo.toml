@@ -4,3 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+bytemuck = { version = "1.25.2", features = ["derive"] }
+clap = { version = "4.6.6", features = ["derive"] }
+hound = "3.5.1"
+pollster = "1.0.1"
+sph-core = { version = "0.1.0", path = "../sph-core" }
+sph-core-gpu = { version = "0.1.0", path = "../sph-core-gpu" }
+sph-synth = { version = "0.1.0", path = "../sph-synth" }
+wgpu = "30.0.1"
+winit = "0.30.13"

@@ -1,14 +1,11 @@
-// WGPU particle visualization pipeline.
-
 use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
-use sph_core::ParticleSnapshot;
 use wgpu::util::DeviceExt;
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
-const MAX_PARTICLES: usize = 1 << 16;
+use crate::particles::Particle;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -21,8 +18,9 @@ const QUAD_CORNERS: [Corner; 4] = [
     Corner([1.0, 1.0]),
 ];
 
-/// Owns the GPU surface and render pipeline used to draw a ParticleSnapshot each frame.
-pub struct WgpuView {
+/// Owns the GPU surface and render pipeline. Draws directly from a GPU particle
+/// buffer (see gpu_sim.rs) each frame — no CPU round trip.
+pub struct Renderer {
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -30,10 +28,9 @@ pub struct WgpuView {
     config: wgpu::SurfaceConfiguration,
     pipeline: wgpu::RenderPipeline,
     quad_buffer: wgpu::Buffer,
-    instance_buffer: wgpu::Buffer,
 }
 
-impl WgpuView {
+impl Renderer {
     pub async fn new(window: Arc<Window>) -> Self {
         let size = window.inner_size();
 
@@ -64,7 +61,7 @@ impl WgpuView {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("particle shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/particle.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("renderer.wgsl").into()),
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -91,7 +88,7 @@ impl WgpuView {
                         }],
                     }),
                     Some(wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<[f32; 2]>() as wgpu::BufferAddress,
+                        array_stride: std::mem::size_of::<Particle>() as wgpu::BufferAddress,
                         step_mode: wgpu::VertexStepMode::Instance,
                         attributes: &[wgpu::VertexAttribute {
                             format: wgpu::VertexFormat::Float32x2,
@@ -127,13 +124,6 @@ impl WgpuView {
             usage: wgpu::BufferUsages::VERTEX,
         });
 
-        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("particle instance positions"),
-            size: (MAX_PARTICLES * std::mem::size_of::<[f32; 2]>()) as wgpu::BufferAddress,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
         Self {
             window,
             surface,
@@ -142,8 +132,15 @@ impl WgpuView {
             config,
             pipeline,
             quad_buffer,
-            instance_buffer,
         }
+    }
+
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.queue
     }
 
     pub fn window(&self) -> &Window {
@@ -159,16 +156,9 @@ impl WgpuView {
         self.surface.configure(&self.device, &self.config);
     }
 
-    pub fn render(&mut self, snapshot: &ParticleSnapshot) {
-        let instances: Vec<[f32; 2]> = snapshot
-            .positions
-            .iter()
-            .take(MAX_PARTICLES)
-            .map(|p| [p.x, p.y])
-            .collect();
-        self.queue
-            .write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&instances));
-
+    /// Draws `particle_count` instances straight from `particle_buffer` (a GpuSim's
+    /// storage buffer) — no CPU readback, physics stays on the GPU end to end.
+    pub fn render(&mut self, particle_buffer: &wgpu::Buffer, particle_count: u32) {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
@@ -216,8 +206,8 @@ impl WgpuView {
 
             pass.set_pipeline(&self.pipeline);
             pass.set_vertex_buffer(0, self.quad_buffer.slice(..));
-            pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-            pass.draw(0..QUAD_CORNERS.len() as u32, 0..instances.len() as u32);
+            pass.set_vertex_buffer(1, particle_buffer.slice(..));
+            pass.draw(0..QUAD_CORNERS.len() as u32, 0..particle_count);
         }
 
         self.queue.submit(Some(encoder.finish()));
